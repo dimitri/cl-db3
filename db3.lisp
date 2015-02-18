@@ -79,6 +79,9 @@ The data records are layed out as follows:
 |#
 (in-package :db3)
 
+(defparameter *external-format* :ascii
+  "External format of the DBF file Character data")
+
 
 ;;; reading binary stuff
 (defun read-uint32 (stream)
@@ -125,7 +128,14 @@ The data records are layed out as follows:
     string))
 
 (defun ascii->string (array)
-  (map 'string #'code-char array))
+  (cond
+    ((eq :ascii *external-format*) (map 'string #'code-char array))
+
+    (t #+sbcl
+       (sb-ext:octets-to-string array :external-format *external-format*)
+
+       #+ccl
+       (ccl:decode-string-from-octets array :external-format *external-format*))))
 
 
 (defun load-field-descriptor (stream)
@@ -172,7 +182,7 @@ The data records are layed out as follows:
 
 
 (defmethod load-field (type length stream)
-  (let ((field (make-array length)))
+  (let ((field (make-array length :element-type '(unsigned-byte 8))))
     (read-sequence field stream)
     (convert-field type field)))
 

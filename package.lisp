@@ -2,7 +2,8 @@
 
 (defpackage #:db3
   (:use #:cl)
-  (:export #:db3			; the main class
+  (:export #:*external-format*
+           #:db3			; the main class
 	   #:load-header
 	   #:record-count
 	   #:load-record
