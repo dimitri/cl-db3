@@ -76,6 +76,39 @@ The data records are layed out as follows:
      Date           (8 digits in YYYYMMDD format, such as
                     19840704 for July 4, 1984)
 
+More information, from
+  http://www.independent-software.com/dbase-dbf-dbt-file-format.html
+
+  The version byte is one of the following:
+
+  Byte	Bits	Version
+  0x02	0000	0010	FoxBase 1.0
+  0x03	0000	0011	FoxBase 2.x / dBASE III
+  0x83	1000	0011	FoxBase 2.x / dBASE III with memo file
+  0x30	0011	0000	Visual FoxPro
+  0x31	0011	0001	Visual FoxPro with auto increment
+  0x32	0011	0010	Visual FoxPro with varchar/varbinary
+  0x43	0100	0011	dBASE IV SQL Table, no memo file
+  0x63	0110	0011	dBASE IV SQL System, no memo file
+  0x8b	1000	1011	dBASE IV with memo file
+  0xcb	1100	1011	dBASE IV SQL Table with memo file
+  0xfb	1111	1011	FoxPro 2
+  0xf5	1111	0101	FoxPro 2 with memo file
+
+  Valid dBASE for DOS file; bits 0-2 indicate version number, bit 3
+  indicates the presence of a dBASE for DOS memo file, bits 4-6 indicate the
+  presence of a SQL table, bit 7 indicates the presence of any memo
+  file (either dBASE m PLUS or dBASE for DOS)
+
+  Memo file header structure
+
+  Offset	Size	Type	Sample value	Description
+  0x00		4	uint32	34	Index of next available data block
+                                        (for appending data) (BIG ENDIAN)
+  0x04		2	uint16	64	Block size in bytes
+  0x06		506	 	 	(Reserved)
+
+
 |#
 (in-package :db3)
 
@@ -103,7 +136,9 @@ The data records are layed out as follows:
 ;;; objects
 
 (defclass db3 ()
-  ((version-number :accessor version-number)
+  ((filename :initarg :filename :accessor filename)
+   (memo :accessor memo)
+   (version-number :accessor version-number)
    (last-update :accessor last-update)
    (record-count :accessor record-count)
    (header-length :accessor header-length)
@@ -117,6 +152,19 @@ The data records are layed out as follows:
    (data-address :accessor data-address)
    (field-length :accessor field-length)
    (field-count :accessor field-count)))
+
+
+(defclass db3-memo ()
+  ((filename :initarg :filename :accessor filename)
+   (stream :accessor db3-memo-stream)
+   (next-block :accessor next-block)
+   (block-size :accessor block-size)))
+
+
+(defclass db3-memo-block ()
+  ((type :accessor block-type)
+   (size :accessor block-size)
+   (data :accessor block-data :initarg :data)))
 
 
 (defun asciiz->string (array)
@@ -157,8 +205,15 @@ The data records are layed out as follows:
 
 (defmethod load-header ((db3 db3) stream)
   (let ((version (read-byte stream)))
-    (unless (= version #x03)
-      (error "Can't handle this file"))
+    (ecase version
+      (#x03 nil)                        ; accepted version, nothing to do
+      (#x83
+       (assert (not (null (filename db3))))
+       (let ((memo (make-instance 'db3-memo)))
+         (setf (filename memo)
+               (make-pathname :defaults (filename db3) :type "dbt")
+               (memo db3) memo)))
+      (t (error "DB3: Can't handle DBF file with version ~x" version)))
     (let ((year (read-byte stream))
           (month (read-byte stream))
           (day (read-byte stream)))
@@ -171,28 +226,82 @@ The data records are layed out as follows:
       (setf (fields db3) (loop repeat (field-count db3)
                                collect (load-field-descriptor stream)))
       (assert (= (read-byte stream) #x0D))
+      (load-memo-header db3)
       db3)))
 
+(defmethod load-memo-header ((db3 db3))
+  (when (= #x83 (version-number db3))
+    (setf (db3-memo-stream (memo db3))
+          (open (filename (memo db3))
+                :direction :input
+                :element-type '(unsigned-byte 8)))
+    (let ((stream (db3-memo-stream (memo db3))))
+      ;;
+      ;; https://www.clicketyclick.dk/databases/xbase/format/dbt.html#DBT_STRUCT
+      ;;
+      ;; Version 0x83 is dbase III+, meaning block size of 512
+      ;; Version 0x8b is dbase IV, where size of block is per file
+      ;;
+      (setf (next-block (memo db3)) (read-uint32 stream)
+            (block-size (memo db3)) 512)
+      (format t "load-memo-header: block-size ~d, next block ~d~%"
+              (block-size (memo db3))
+              (next-block (memo db3))))))
 
-(defmethod convert-field (type data)
+(defmethod load-memo-record ((db3 db3) data)
+  (let* ((stream (db3-memo-stream (memo db3)))
+         (record (make-instance 'db3-memo-block :data nil))
+         (block-index
+          (case (length data)
+            (4 (read-uint32 data))
+            (t (parse-integer (ascii->string data) :junk-allowed t))))
+         (position (when block-index
+                     (* (block-size (memo db3)) block-index))))
+    (when position
+      (file-position stream position)
+      ;; dbase III+ memo record only have the data, no type, no size
+      (let ((block-data (make-array (block-size (memo db3))
+                                    :element-type '(unsigned-byte 8))))
+        (read-sequence block-data stream)
+        (let ((terminator (search #(#x1a #x1a) block-data)))
+          (if terminator
+              (let ((user-data (subseq block-data 0 terminator)))
+                (setf (block-data record) (ascii->string user-data)))
+              (error "DB3: failed to find 0x1A 0x1A record terminator")))))
+    record))
+
+(defmethod close-memo ((db3 db3))
+  (let ((s (db3-memo-stream (memo db3))))
+   (when (and s (open-stream-p s))
+     (close s))))
+
+
+(defmethod convert-field (db3 type data)
+  (declare (ignore db3 type))
   (ascii->string data))
 
-(defmethod convert-field ((type (eql #\C)) data)
+(defmethod convert-field (db3 (type (eql #\C)) data)
+  (declare (ignore db3))
   (ascii->string data))
 
+(defmethod convert-field (db3 (type (eql #\M)) data)
+  (let ((memo (load-memo-record db3 data)))
+    (when memo
+      (block-data memo))))
 
-(defmethod load-field (type length stream)
-  (let ((field (make-array length :element-type '(unsigned-byte 8))))
-    (read-sequence field stream)
-    (convert-field type field)))
+
+(defmethod load-field ((db3 db3) (field db3-field) stream)
+  (let ((data
+         (make-array (field-length field) :element-type '(unsigned-byte 8))))
+    (read-sequence data stream)
+    (convert-field db3 (field-type field) data)))
 
 (defmethod load-record ((db3 db3) stream)
   (read-byte stream)
   (loop with record = (make-array (field-count db3))
         for i below (field-count db3)
         for field in (fields db3)
-        do (setf (svref record i)
-                 (load-field (field-type field) (field-length field) stream))
+        do (setf (svref record i) (load-field db3 field stream))
         finally (return record)))
 
 
@@ -210,7 +319,7 @@ The data records are layed out as follows:
                           :element-type '(unsigned-byte 8))
     (with-open-file (ostream output :direction :output
                              :element-type 'character)
-      (let ((db3 (make-instance 'db3)))
+      (let ((db3 (make-instance 'db3 :filename input)))
         (load-header db3 stream)
         (loop repeat (record-count db3)
               do (write-record (load-record db3 stream) ostream))

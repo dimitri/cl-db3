@@ -64,6 +64,7 @@ and data records.  The layout is given below.
 
   3. Data types are stored in ASCII format as follows:
 
+     ~~~
    DATA TYPE      DATA RECORD STORAGE
    ---------      --------------------------------------------
    Character      (ASCII characters)
@@ -73,5 +74,12 @@ and data records.  The layout is given below.
    Date           (8 digits in YYYYMMDD format, such as
                     19840704 for July 4, 1984)
    -----------------------------------------------------------
+     ~~~
 
+### Initial support for Memo files
+
+Dbase memo files seem to be like their own kind of fun. Initial attempt at
+providing support for them has been hacked together for dBase III+ versions.
+dBase IV are said to be using a different formating, with per-block block
+size and type.
 
