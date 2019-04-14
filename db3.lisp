@@ -243,10 +243,7 @@ More information, from
       ;; Version 0x8b is dbase IV, where size of block is per file
       ;;
       (setf (next-block (memo db3)) (read-uint32 stream)
-            (block-size (memo db3)) 512)
-      (format t "load-memo-header: block-size ~d, next block ~d~%"
-              (block-size (memo db3))
-              (next-block (memo db3))))))
+            (block-size (memo db3)) 512))))
 
 (defmethod load-memo-record ((db3 db3) data)
   (let* ((stream (db3-memo-stream (memo db3)))
