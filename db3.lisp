@@ -271,9 +271,10 @@ More information, from
     record))
 
 (defmethod close-memo ((db3 db3))
-  (let ((s (db3-memo-stream (memo db3))))
-   (when (and s (open-stream-p s))
-     (close s))))
+  (let ((s (when (slot-boundp db3 'memo)
+             (db3-memo-stream (memo db3)))))
+    (when (and s (open-stream-p s))
+      (close s))))
 
 
 (defmethod convert-field (db3 type data)

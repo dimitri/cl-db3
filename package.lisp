@@ -5,6 +5,7 @@
   (:export #:*external-format*
            #:db3			; the main class
 	   #:load-header
+           #:close-memo
 	   #:record-count
 	   #:load-record
 	   #:write-record
