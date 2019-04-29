@@ -205,13 +205,16 @@ More information, from
 
 (defmethod load-header ((db3 db3) stream)
   (let ((version (read-byte stream)))
-    (ecase version
+    (case version
       (#x03 nil)                        ; accepted version, nothing to do
       (#x83
        (assert (not (null (filename db3))))
        (let ((memo (make-instance 'db3-memo)))
          (setf (filename memo)
-               (make-pathname :defaults (filename db3) :type "dbt")
+               (or (probe-file
+                    (make-pathname :defaults (filename db3) :type "dbt"))
+                   (probe-file
+                    (make-pathname :defaults (filename db3) :type "DBT")))
                (memo db3) memo)))
       (t (error "DB3: Can't handle DBF file with version ~x" version)))
     (let ((year (read-byte stream))
