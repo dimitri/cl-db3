@@ -281,6 +281,15 @@ More information, from
   (declare (ignore db3 type))
   (ascii->string data))
 
+(defmethod convert-field (db3 (type (eql #\I)) data)
+  ;; data is an array of 4 bytes representing a signed integer
+  (declare (ignore db3))
+  (let ((bits (apply #'logior
+                     (reverse (loop for b across data
+                                 for i from 0 by 8
+                                 collect (ash b i))))))
+    (logior bits (- (mask-field (byte 1 (1- 32)) bits)))))
+
 (defmethod convert-field (db3 (type (eql #\C)) data)
   (declare (ignore db3))
   (ascii->string data))
