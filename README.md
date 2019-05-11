@@ -65,15 +65,15 @@ and data records.  The layout is given below.
   3. Data types are stored in ASCII format as follows:
 
      ~~~
-   DATA TYPE      DATA RECORD STORAGE
-   ---------      --------------------------------------------
-   Character      (ASCII characters)
-   Numeric        - . 0 1 2 3 4 5 6 7 8 9
-   Logical        ? Y y N n T t F f  (? when not initialized)
-   Memo           (10 digits representing a .DBT block number)
-   Date           (8 digits in YYYYMMDD format, such as
-                    19840704 for July 4, 1984)
-   -----------------------------------------------------------
+     DATA TYPE      DATA RECORD STORAGE
+     ---------      --------------------------------------------
+     Character      (ASCII characters)
+     Numeric        - . 0 1 2 3 4 5 6 7 8 9
+     Logical        ? Y y N n T t F f  (? when not initialized)
+     Memo           (10 digits representing a .DBT block number)
+     Date           (8 digits in YYYYMMDD format, such as
+                      19840704 for July 4, 1984)
+     -----------------------------------------------------------
      ~~~
 
 ### Initial support for Memo files
