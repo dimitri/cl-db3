@@ -439,8 +439,9 @@ More information, from
 
 (defmethod convert-field (db3 (type (eql #\F)) data)
   (declare (ignore db3))
-  (let ((*read-default-float-format* 'double-float))
-    (read-from-string (ascii->string data))))
+  (let ((*read-default-float-format* 'double-float)
+        (float-string (string-right-trim '(#\Space) (ascii->string data))))
+    (if (string= "" float-string) nil (read-from-string float-string))))
 
 (defmethod convert-field (db3 (type (eql #\C)) data)
   (declare (ignore db3))
