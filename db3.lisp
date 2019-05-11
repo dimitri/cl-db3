@@ -304,7 +304,7 @@ More information, from
     (case version
       (#x03 nil)                        ; accepted version, nothing to do
       (#x31 nil)                        ; Visual FoxPro with auto_increment
-      (#x83
+      ((#x83 #x8b)
        (assert (not (null (filename db3))))
        (let ((memo (make-instance 'db3-memo)))
          (setf (filename memo)
@@ -351,7 +351,7 @@ More information, from
       db3)))
 
 (defmethod load-memo-header ((db3 db3))
-  (when (= #x83 (version-number db3))
+  (when (member (version-number db3) '(#x83 #x8b))
     (setf (db3-memo-stream (memo db3))
           (open (filename (memo db3))
                 :direction :input
@@ -364,7 +364,10 @@ More information, from
       ;; Version 0x8b is dbase IV, where size of block is per file
       ;;
       (setf (next-block (memo db3)) (read-uint32 stream)
-            (block-size (memo db3)) 512))))
+            (block-size (memo db3)) (case (version-number db3)
+                                      (#x83 512)
+                                      (#x8b (file-position stream 20)
+                                            (read-uint32 stream)))))))
 
 (defmethod load-memo-record ((db3 db3) data)
   (let* ((stream (db3-memo-stream (memo db3)))
@@ -377,15 +380,31 @@ More information, from
                      (* (block-size (memo db3)) block-index))))
     (when position
       (file-position stream position)
-      ;; dbase III+ memo record only have the data, no type, no size
-      (let ((block-data (make-array (block-size (memo db3))
-                                    :element-type '(unsigned-byte 8))))
-        (read-sequence block-data stream)
-        (let ((terminator (search #(#x1a #x1a) block-data)))
-          (if terminator
-              (let ((user-data (subseq block-data 0 terminator)))
-                (setf (block-data record) (ascii->string user-data)))
-              (error "DB3: failed to find 0x1A 0x1A record terminator")))))
+      (case (version-number db3)
+        (#x83
+         ;; dbase III+ memo record only have the data, no type, no size
+         (let ((block-data (make-array (block-size (memo db3))
+                                       :element-type '(unsigned-byte 8))))
+           (read-sequence block-data stream)
+           (let ((terminator (search #(#x1a #x1a) block-data)))
+             (if terminator
+                 (let ((user-data (subseq block-data 0 terminator)))
+                   (setf (block-data record) (ascii->string user-data)))
+                 (error "DB3: failed to find 0x1A 0x1A record terminator")))))
+
+        (#x8b
+         ;; first 4-bytes are FFh FFh 08h 00h
+         (let* ((reserved   (make-array 4 :element-type '(unsigned-byte 8)))
+                (dummy      (read-sequence reserved stream))
+                (size       (read-uint32 stream))
+                (block-data (make-array size :element-type '(unsigned-byte 8))))
+           (declare (ignore dummy))
+
+           (setf (block-size record) size)
+           (read-sequence block-data stream)
+
+           (let ((user-data (subseq block-data 0 (position #x1f block-data))))
+             (setf (block-data record) (ascii->string user-data)))))))
     record))
 
 (defmethod close-memo ((db3 db3))
@@ -417,6 +436,11 @@ More information, from
   (declare (ignore db3)
            ((vector (unsigned-byte 8) 8) data))
   (bytes->bigint data))
+
+(defmethod convert-field (db3 (type (eql #\F)) data)
+  (declare (ignore db3))
+  (let ((*read-default-float-format* 'double-float))
+    (read-from-string (ascii->string data))))
 
 (defmethod convert-field (db3 (type (eql #\C)) data)
   (declare (ignore db3))
