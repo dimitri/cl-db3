@@ -255,6 +255,33 @@ More information, from
        (ccl:decode-string-from-octets array :external-format *external-format*))))
 
 
+(declaim (inline unsigned-to-signed bytes->integer bytes->bigint))
+
+(defun unsigned-to-signed (byte n)
+  (declare (type fixnum n) (type unsigned-byte byte))
+  (logior byte (- (mask-field (byte 1 (1- (* n 8))) byte))))
+
+(defun bytes->integer (data)
+  (declare ((vector (unsigned-byte 8) 4) data))
+  (let ((bits (logior (ash (aref data 3) 24)
+                      (ash (aref data 2) 16)
+                      (ash (aref data 1) 8)
+                      (aref data 0))))
+    (unsigned-to-signed bits 4)))
+
+(defun bytes->bigint (data)
+  (declare ((vector (unsigned-byte 8) 8) data))
+  (let ((bits (logior (ash (aref data 7) 56)
+                      (ash (aref data 6) 48)
+                      (ash (aref data 5) 40)
+                      (ash (aref data 4) 32)
+                      (ash (aref data 3) 24)
+                      (ash (aref data 2) 16)
+                      (ash (aref data 1) 8)
+                      (aref data 0))))
+    (unsigned-to-signed bits 8)))
+
+
 (defun load-field-descriptor (stream)
   (let ((field (make-instance 'db3-field))
         (name (make-array 11 :element-type '(unsigned-byte 8))))
@@ -269,13 +296,14 @@ More information, from
 
 
 (defmethod field-count ((db3 db3))
-  (1- (/ (1- (header-length db3)) 32)))
+  (length (fields db3)))
 
 
 (defmethod load-header ((db3 db3) stream)
   (let ((version (read-byte stream)))
     (case version
       (#x03 nil)                        ; accepted version, nothing to do
+      (#x31 nil)                        ; Visual FoxPro with auto_increment
       (#x83
        (assert (not (null (filename db3))))
        (let ((memo (make-instance 'db3-memo)))
@@ -285,21 +313,40 @@ More information, from
                    (probe-file
                     (make-pathname :defaults (filename db3) :type "DBT")))
                (memo db3) memo)))
-      (t (error "DB3: Can't handle DBF file with version ~x" version)))
+      (t (error "DB3: Can't handle DBF file with version 0x~x" version)))
     (let ((year (read-byte stream))
           (month (read-byte stream))
           (day (read-byte stream)))
       (setf (version-number db3) version
-            (last-update db3) (list year month day)
+            (last-update db3) (list (if (< year 80) (+ 2000 year) (+ 1900 year))
+                                    month
+                                    day)
             (record-count db3) (read-uint32 stream)
             (header-length db3) (read-uint16 stream)
             (record-length db3) (read-uint16 stream))
       (file-position stream 29)
       (setf (encoding db3) (language-driver-to-encoding (read-byte stream)))
       (file-position stream 32)
-      (setf (fields db3) (loop repeat (field-count db3)
-                               collect (load-field-descriptor stream)))
+      (setf (fields db3)
+            (loop for read-ahead = (read-byte stream)
+               ;; it's kind of a peek-byte here
+               do (file-position stream (1- (file-position stream)))
+               until (= read-ahead #x0D)
+               collect (load-field-descriptor stream)))
       (assert (= (read-byte stream) #x0D))
+
+      ;;
+      ;; https://www.dbf2002.com/dbf-file-format.html
+      ;;
+      ;; Visual Foxpro only: A 263-byte range that contains the backlink,
+      ;; which is the relative path of an associated database (.dbc) file,
+      ;; information. If the first byte is 0x00, the file is not associated
+      ;; with a database. Therefore, database files always contain 0x00.
+      ;;
+      (when (= #x31 version)
+       (let ((backlink (make-array 263 :element-type '(unsigned-byte 8))))
+         (read-sequence backlink stream)))
+
       (load-memo-header db3)
       db3)))
 
@@ -352,15 +399,24 @@ More information, from
   (declare (ignore db3 type))
   (ascii->string data))
 
+(defmethod convert-field (db3 (type (eql #\0)) data)
+  (declare (ignore db3))
+  data)
+
 (defmethod convert-field (db3 (type (eql #\I)) data)
-  ;; data is an array of 4 bytes representing a signed integer
   (declare (ignore db3)
-           ((simple-array (unsigned-byte 8) 4) data))
-  (let ((bits (logior (ash (aref data 3) 24)
-                      (ash (aref data 2) 16)
-                      (ash (aref data 1) 8)
-                      (aref data 0))))
-    (logior bits (- (mask-field (byte 1 (1- 32)) bits)))))
+           ((vector (unsigned-byte 8) 4) data))
+  (bytes->integer data))
+
+(defmethod convert-field (db3 (type (eql #\+)) data)
+  (declare (ignore db3)
+           ((vector (unsigned-byte 8) 4) data))
+  (bytes->integer data))
+
+(defmethod convert-field (db3 (type (eql #\Y)) data)
+  (declare (ignore db3)
+           ((vector (unsigned-byte 8) 8) data))
+  (bytes->bigint data))
 
 (defmethod convert-field (db3 (type (eql #\C)) data)
   (declare (ignore db3))
@@ -414,7 +470,26 @@ More information, from
     (let ((db3 (make-instance 'db3)))
       (load-header db3 stream)
       (loop
-	 :repeat sample-size
+	 :repeat (min sample-size (record-count db3))
 	 :do (format ostream "~s~%" (load-record db3 stream)))
       db3)))
 
+(defun inspect-db3 (input ostream &key (sample-size 3))
+  (with-open-file (stream input :direction :input
+                          :element-type '(unsigned-byte 8))
+    (let ((db3 (make-instance 'db3 :filename (truename stream))))
+      (load-header db3 stream)
+
+      (format ostream "Version:  ~a~%" (version-number db3))
+      (format ostream "Records:  ~a~%" (record-count db3))
+      (format ostream "Encoding: ~a~%" (encoding db3))
+      (format ostream "Fields:~%~{  ~a~^~%~}~%"
+              (mapcar (lambda (f) (format nil "~a ~12t~c ~3db"
+                                          (field-name f)
+                                          (field-type f)
+                                          (field-length f)))
+                      (fields db3)))
+      (loop
+	 :repeat (min sample-size (record-count db3))
+	 :do (format ostream "~s~%" (load-record db3 stream)))
+      db3)))
