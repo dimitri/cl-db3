@@ -262,7 +262,7 @@ More information, from
   (logior byte (- (mask-field (byte 1 (1- (* n 8))) byte))))
 
 (defun bytes->integer (data)
-  (declare ((vector (unsigned-byte 8) 4) data))
+  (declare ((simple-array (unsigned-byte 8) (4)) data))
   (let ((bits (logior (ash (aref data 3) 24)
                       (ash (aref data 2) 16)
                       (ash (aref data 1) 8)
@@ -270,7 +270,7 @@ More information, from
     (unsigned-to-signed bits 4)))
 
 (defun bytes->bigint (data)
-  (declare ((vector (unsigned-byte 8) 8) data))
+  (declare ((simple-array (unsigned-byte 8) (8)) data))
   (let ((bits (logior (ash (aref data 7) 56)
                       (ash (aref data 6) 48)
                       (ash (aref data 5) 40)
@@ -424,17 +424,17 @@ More information, from
 
 (defmethod convert-field (db3 (type (eql #\I)) data)
   (declare (ignore db3)
-           ((vector (unsigned-byte 8) 4) data))
+           ((simple-array (unsigned-byte 8) (4)) data))
   (bytes->integer data))
 
 (defmethod convert-field (db3 (type (eql #\+)) data)
   (declare (ignore db3)
-           ((vector (unsigned-byte 8) 4) data))
+           ((simple-array (unsigned-byte 8) (4)) data))
   (bytes->integer data))
 
 (defmethod convert-field (db3 (type (eql #\Y)) data)
   (declare (ignore db3)
-           ((vector (unsigned-byte 8) 8) data))
+           ((simple-array (unsigned-byte 8) (8)) data))
   (bytes->bigint data))
 
 (defmethod convert-field (db3 (type (eql #\F)) data)
