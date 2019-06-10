@@ -460,13 +460,13 @@ More information, from
     (convert-field db3 (field-type field) data)))
 
 (defmethod load-record ((db3 db3) stream)
-  (let ((*external-format* (or (encoding db3) *external-format*)))
-    (read-byte stream)
+  (let ((*external-format* (or (encoding db3) *external-format*))
+        (deleted-mark      (read-byte stream)))
     (loop with record = (make-array (field-count db3))
        for i below (field-count db3)
        for field in (fields db3)
        do (setf (svref record i) (load-field db3 field stream))
-       finally (return record))))
+       finally (return (values record (= #. (char-code #\*) deleted-mark))))))
 
 
 (defun write-record (record stream)
