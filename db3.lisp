@@ -351,7 +351,8 @@ More information, from
       db3)))
 
 (defmethod load-memo-header ((db3 db3))
-  (when (member (version-number db3) '(#x83 #x8b))
+  (when (and (member (version-number db3) '(#x83 #x8b))
+             (filename (memo db3)))     ; might be nil
     (setf (db3-memo-stream (memo db3))
           (open (filename (memo db3))
                 :direction :input
@@ -370,6 +371,12 @@ More information, from
                                             (read-uint32 stream)))))))
 
 (defmethod load-memo-record ((db3 db3) data)
+  (unless (and (slot-boundp db3 'memo)
+               (slot-boundp (memo db3) 'stream)
+               (db3-memo-stream (memo db3)))
+    ;; silently ignore memo files set to NIL
+    (return-from load-memo-record nil))
+
   (let* ((stream (db3-memo-stream (memo db3)))
          (record (make-instance 'db3-memo-block :data nil))
          (block-index
@@ -408,7 +415,9 @@ More information, from
     record))
 
 (defmethod close-memo ((db3 db3))
-  (let ((s (when (slot-boundp db3 'memo)
+  (let ((s (when (and (slot-boundp db3 'memo)
+                      (memo db3)
+                      (slot-boundp (memo db3) 'stream))
              (db3-memo-stream (memo db3)))))
     (when (and s (open-stream-p s))
       (close s))))
@@ -505,9 +514,11 @@ More information, from
     (let ((db3 (make-instance 'db3 :filename (truename stream))))
       (load-header db3 stream)
 
-      (format ostream "Version:  ~a~%" (version-number db3))
-      (format ostream "Records:  ~a~%" (record-count db3))
-      (format ostream "Encoding: ~a~%" (encoding db3))
+      (format ostream "Version:   ~a~%" (version-number db3))
+      (format ostream "Records:   ~a~%" (record-count db3))
+      (format ostream "Encoding:  ~a~%" (encoding db3))
+      (when (memo db3)
+        (format ostream "Memo file: ~a~%" (filename (memo db3))))
       (format ostream "Fields:~%~{  ~a~^~%~}~%"
               (mapcar (lambda (f) (format nil "~a ~12t~c ~3db"
                                           (field-name f)
